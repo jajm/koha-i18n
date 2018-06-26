@@ -49,6 +49,14 @@ func main() {
                 if (token.Type == html.StartTagToken || token.Type == html.SelfClosingTagToken) {
                     output.WriteString("<")
                     output.WriteString(token.Data)
+                    value_should_be_translated := false
+                    if token.DataAtom == atom.Input {
+                        for _, attr := range token.Attr {
+                            if 0 == strings.Compare(attr.Key, "type") && 0 == strings.Compare(attr.Val, "submit") {
+                                value_should_be_translated = true
+                            }
+                        }
+                    }
                     for _, attr := range token.Attr {
                         output.WriteString(" ")
                         output.WriteString(attr.Key)
@@ -56,7 +64,8 @@ func main() {
                         if (0 == strings.Compare(attr.Key, "alt") ||
                           0 == strings.Compare(attr.Key, "title") ||
                           0 == strings.Compare(attr.Key, "label") ||
-                          0 == strings.Compare(attr.Key, "placeholder")) {
+                          0 == strings.Compare(attr.Key, "placeholder") ||
+                          (0 == strings.Compare(attr.Key, "value") && value_should_be_translated)) {
                             writePossiblyTranslatableTextToBuffer(&output, attr.Val)
                         } else {
                             output.WriteString(strings.Replace(attr.Val, "&#39;", "'", -1))

@@ -1,0 +1,150 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use HTML::Parser;
+
+my @tokens;
+my $p = HTML::Parser->new(
+    api_version => 3,
+    unbroken_text => 1,
+    boolean_attribute_value => '__BOOLEAN__',
+    handlers => {
+        default => [\@tokens, 'event, text, is_cdata, tagname, attrseq, attr'],
+    }
+);
+
+my @filenames = @ARGV;
+foreach my $filename (@filenames) {
+    my $fh;
+    unless (open $fh, '<:encoding(UTF-8)', $filename) {
+        warn "Can't open $filename: $!";
+        next;
+    }
+
+    @tokens = ();
+    $p->parse_file($fh);
+    close $fh;
+
+    my $buffer = '';
+    foreach my $token (@tokens) {
+        my ($type, $text, $is_cdata, $tagname, $attrseq, $attr) = @$token;
+        if ($is_cdata) {
+            $buffer .= $text;
+            next;
+        }
+
+        my $write_translatable_text_to_buffer = sub {
+            my ($text) = @_;
+            my @chunks = split /(\[%.*?%\]|&rsaquo;)/m, $text;
+            my $is_translatable = 0;
+            my @acc;
+
+            my $empty_acc = sub {
+                if (@acc) {
+                    if ($is_translatable) {
+                        my @msgids;
+                        my %args;
+                        foreach my $a (@acc) {
+                            if ($a =~ /^\[%[+-=~]?\s*(.*?)\s*[+-=~]?%\]$/) {
+                                my $stmt = $1;
+                                $stmt =~ s/\|\|/_DOUBLE_PIPE_/g;
+                                my ($expr, @filters) = split /\s*\|\s*/, $stmt;
+                                $expr =~ s/_DOUBLE_PIPE_/||/g;
+                                my $value = $expr;
+                                foreach my $filter (@filters) {
+                                    $filter =~ s/^\$//;
+                                    my ($filtername, $argstr);
+                                    if ($filter =~ /(\w+)\((.*)\)/) {
+                                        ($filtername, $argstr) = ($1, $2);
+                                    } else {
+                                        ($filtername, $argstr) = split / /, $filter, 2;
+                                    }
+                                    if ($argstr) {
+                                        $value = "$filtername($value, $argstr)";
+                                    } else {
+                                        $value = "$filter($value)";
+                                    }
+                                }
+                                my $key = $expr;
+                                $key =~ s/^\s*\(\s*(.*?)\s*\)\s*$/$1/; # remove whitespace and parentheses
+                                $key =~ s/^"(.*?)"$/$1/; # remove quotes
+                                $key =~ s/^'(.*?)'$/$1/; # remove quotes
+                                $key =~ s/\W/_/g;
+                                push @msgids, "{$key}";
+                                $args{$key} = $value;
+                            } else {
+                                push @msgids, $a;
+                            }
+                        }
+                        my $msgid = join('', @msgids);
+                        $msgid =~ s/^(\s*)//; my $leading = $1;
+                        $msgid =~ s/(\s*)$//; my $trailing = $1;
+                        $buffer .= $leading;
+                        $msgid =~ s/\s+/ /g;
+                        $msgid =~ s/'/\\'/g;
+                        if (%args) {
+                            $buffer .= "[% tx('$msgid', { " . join(', ', map { "$_ = " . $args{$_} } keys %args) . " }) %]";
+                        } else {
+                            $buffer .= "[% t('$msgid') %]";
+                        }
+                        $buffer .= $trailing;
+                        $is_translatable = 0;
+                    } else {
+                        $buffer .= $_ for @acc;
+                    }
+                    @acc = ();
+                }
+            };
+
+            while (@chunks) {
+                my $chunk = shift @chunks;
+                if ($chunk =~ /^\s*$/
+                || $chunk =~ /^&rsaquo;$/
+                || $chunk =~ /^\[%[+-=~]?\s*(GET|CALL|SET|DEFAULT|INSERT|INCLUDE|PROCESS|WRAPPER|BLOCK|IF|UNLESS|ELSIF|ELSE|SWITCH|CASE|FOREACH|WHILE|FILTER|USE|MACRO|PERL|RAWPERL|TRY|THROW|CATCH|FINAL|NEXT|LAST|RETURN|STOP|CLEAR|META|TAGS|DEBUG|END)/) {
+                    $empty_acc->();
+
+                    $buffer .= $chunk;
+                    next;
+                }
+
+                if ($chunk !~ /^\[%[+-=~]?\s*(.*?)\s*[+-=~]?%\]$/ && $chunk =~ /\w/) {
+                    $is_translatable = 1;
+                }
+                push @acc, $chunk;
+            }
+            $empty_acc->();
+        };
+
+        if ($type eq 'text') {
+            $write_translatable_text_to_buffer->($text);
+        } elsif ($type eq 'start') {
+            $buffer .= "<$tagname";
+            foreach my $attrname (@$attrseq) {
+                $buffer .= " $attrname";
+                my $attrvalue = $attr->{$attrname};
+                if (defined $attrvalue && $attrvalue ne '__BOOLEAN__') {
+                    $buffer .= "=\"";
+                    if ((0 < grep {$_ eq $attrname} (qw(title placeholder alt label))) || ($attrname eq 'value' && $tagname eq 'input' && $attr->{type} && $attr->{type} eq 'submit')) {
+                        $write_translatable_text_to_buffer->($attrvalue);
+                    } else {
+                        $buffer .= $attrvalue;
+                    }
+                    $buffer .= "\"";
+                }
+            }
+            $buffer .= ">";
+        } else {
+            $buffer .= $text;
+        }
+    }
+
+    unless (open $fh, '>:encoding(UTF-8)', $filename) {
+        warn "Can't open $filename for writing: $!";
+        next;
+    }
+    print $fh "[% PROCESS 'i18n.inc' %]\n" if $buffer !~ /PROCESS 'i18n\.inc'/;
+    print $fh $buffer;
+    close $fh;
+}

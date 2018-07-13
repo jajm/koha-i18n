@@ -1,21 +1,18 @@
 # koha-i18n
 
-A little program that modifies Koha templates to wrap translatable text inside a
-t() call, to make the text translatable by Koha::I18n
+A little program that modifies Koha templates to wrap translatable text inside
+t() and tx() calls, to make the text translatable by Koha::I18n
 
 ## Installation
 
 ```
-go get github.com/jajm/koha-i18n
+git clone https://github.com/jajm/koha-i18n.git
 ```
 
 ## Usage
 
 ```
-koha-i18n [--in-place] FILES...
-
-Options:
-    --in-place      Modify files in place instead of printing to STDOUT
+bin/koha-i18n FILES...
 ```
 
 ## License
